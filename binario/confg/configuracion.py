@@ -20,9 +20,9 @@ def load_config():
         "label_column": "Label",
 
         # Federado
-
-        "num_rounds": 200,
+        "num_rounds": 3,
         "num_clients": 10,
+        "clientes_random": True,
         "clients_por_ronda": 5,
         "fraction_fit": 1.0,
         "local_epochs": 5,
@@ -30,7 +30,7 @@ def load_config():
         "lr_cliente_simulado": 0.01,
 
         # Paths
-        "data_file_path": "D:/TRABALLO_CODE/data/combinada/label_data_bi.csv",
+        "data_file_path": "D:/TRABALLO_CODE/data/combinada/binario/federado/bi_fed.csv",
         "client_info_dir": "data/client_info",
         "weights_dir": "pesos",
         "guardado_pesos": "pesos/pesos_fl_bi.csv",

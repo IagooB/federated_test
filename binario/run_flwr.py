@@ -4,4 +4,4 @@ os.environ["RAY_DEDUP_LOGS"] = "0"
 
 from subprocess import call
 
-call(["flwr", "run", ".", "--run-config", "use-wandb=true"])
+call(["flwr", "run", ".", "--run-config", "use-wandb=false"])

@@ -1,6 +1,6 @@
 import json
 import logging
-import os
+import random
 from pathlib import Path
 from typing import Tuple, List
 
@@ -101,66 +101,76 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
                 reinit=True,
             )
 
-    def configure_evaluate(
-            self,
-            server_round: int,
-            parameters: fl.common.Parameters,
-            client_manager: fl.server.ClientManager
-    ):
-        # ​Esperamos a que TODOS los clientes se registren
+    def configure_evaluate(self, server_round, parameters, client_manager):
         client_manager.wait_for(
             num_clients=exper_config["num_clients"],
             timeout=30,
         )
 
-        # Alternamos slice por ronda (igual que en configure_fit)
-        target_slice = 1 if server_round % 2 == 0 else 0
-        eval_clients = []
+        if exper_config.get("clientes_random", False):
+            all_clients = list(client_manager.all().values())
+            num_to_select = exper_config["num_clients"] // 2
+            eval_clients = random.sample(all_clients, num_to_select)
+            logger.info(
+                f"Ronda {server_round}: evaluación aleatoria de {len(eval_clients)} clientes"
+            )
+        else:
+            target_slice = 1 if server_round % 2 == 0 else 0
+            eval_clients = []
+            for cid, client in client_manager.all().items():
+                try:
+                    props = client.get_properties(
+                        GetPropertiesIns(config={}),
+                        timeout=30,
+                        group_id=None,
+                    ).properties
+                    if props.get("Slice", -1) == target_slice:
+                        eval_clients.append(client)
+                except Exception:
+                    continue
+            logger.info(
+                f"Ronda {server_round}: evaluando {len(eval_clients)} clientes (Slice={target_slice})"
+            )
 
-        for cid, client in client_manager.all().items():
-            try:
-                props = client.get_properties(
-                    GetPropertiesIns(config={}),
-                    timeout=30,
-                    group_id=None,
-                ).properties
-                if props.get("Slice", -1) == target_slice:
-                    eval_clients.append(client)
-            except Exception:
-                continue
-
-        # Sólo esos clientes ejecutarán evaluate()
         return [
             (client, EvaluateIns(parameters, {}))
             for client in eval_clients
         ]
 
-    def configure_fit(
-            self,
-            server_round: int,
-            parameters: fl.common.Parameters,
-            client_manager: fl.server.ClientManager,
-    ) -> List[Tuple[fl.server.client_proxy.ClientProxy, FitIns]]:
-        # Esperar a que todos los clientes estén listos
+    def configure_fit(self, server_round, parameters, client_manager):
         client_manager.wait_for(
             num_clients=exper_config["num_clients"],
             timeout=30,
         )
-        # Alternar slice según la ronda
-        target_slice = 1 if server_round % 2 == 0 else 0
-        selected = []
-        for cid, client in client_manager.all().items():
-            try:
-                props = client.get_properties(
-                    GetPropertiesIns(config={}),
-                    timeout=30,
-                    group_id=None
-                ).properties
-                if props.get("Slice", -1) == target_slice:
-                    selected.append(client)
-            except Exception as e:
-                logger.error(f"Error get_properties cliente {cid}: {e}")
-        logger.info(f"Ronda {server_round}: seleccionados {len(selected)} clientes (Slice={target_slice})")
+
+        # ¿Selección aleatoria o por slice?
+        if exper_config.get("clientes_random", False):
+            # Tomamos la mitad de todos los clientes de forma aleatoria
+            all_clients = list(client_manager.all().values())
+            num_to_select = exper_config["num_clients"] // 2
+            selected = random.sample(all_clients, num_to_select)
+            logger.info(
+                f"Ronda {server_round}: selección aleatoria de {len(selected)} clientes"
+            )
+        else:
+            # Lógica actual: slice par/impar
+            target_slice = 1 if server_round % 2 == 0 else 0
+            selected = []
+            for cid, client in client_manager.all().items():
+                try:
+                    props = client.get_properties(
+                        GetPropertiesIns(config={}),
+                        timeout=30, group_id=None
+                    ).properties
+                    if props.get("Slice", -1) == target_slice:
+                        selected.append(client)
+                except Exception as e:
+                    logger.error(f"Error get_properties cliente {cid}: {e}")
+            logger.info(
+                f"Ronda {server_round}: seleccionados {len(selected)} clientes (Slice={target_slice})"
+            )
+
+        # Siempre devolvemos la mitad de clientes
         return [(c, FitIns(parameters, {})) for c in selected]
 
     def aggregate_fit(self, server_round, results, failures):

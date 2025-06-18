@@ -7,7 +7,7 @@ def load_config():
     """
     return {
         # Muestreo y partición
-        "fraction": 1,  # Fracción del dataset completo a muestrear
+        "fraction": 0.1,  # Fracción del dataset completo a muestrear
         "test_size": 0.2,  # Proporción de test/training en cada partición
         "excluir_categoria": None,  # No excluimos ninguna clase en multiclase
         "todas_columnas": True,  # Usar solo feature_columns, no todas las columnas
@@ -21,7 +21,8 @@ def load_config():
         ],
 
         # Federated Learning
-        "num_rounds": 10,  # Número de rondas de federado
+        "clientes_random": True,
+        "num_rounds": 3,  # Número de rondas de federado
         "num_clients": 10,  # Total de clientes
         "clients_por_ronda": 5,  # Clientes muestreamados por ronda
         "fraction_fit": 1.0,  # Fracción de clientes que harán fit
@@ -34,7 +35,7 @@ def load_config():
         "public_label": 1,  # Etiqueta que siempre incluimos en público
 
         # Rutas y logs
-        "data_file_path": "D:/TRABALLO_CODE/data/combinada/label_data.csv",
+        "data_file_path": "D:/TRABALLO_CODE/data/combinada/multi/federado/multi_fed.csv",
         "client_info_dir": "data/client_info",  # Misma carpeta que en binario
         "experiment_log_path": "data/datos_experimento.csv",  # CSV de metadatos de experimento
         "guardado_pesos": "pesos/global_data_multiclase.csv",  # CSV de cambios de pesos

@@ -79,8 +79,6 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
             )
 
         self.previous_parameters = None
-        self.metrics_save_dir = "saved_params"
-        os.makedirs(self.metrics_save_dir, exist_ok=True)
 
         # Paths para logs de métricas
         self.metrics_csv = Path(exper_config.get("metrics_log_path"))
@@ -103,7 +101,7 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
             parameters: fl.common.Parameters,
             client_manager: fl.server.ClientManager
     ):
-        # ​Esperamos a que TODOS los clientes se registren
+        #Esperamos a que TODOS los clientes se registren
         client_manager.wait_for(
             num_clients=exper_config["num_clients"],
             timeout=30,
