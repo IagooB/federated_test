@@ -9,7 +9,7 @@ def load_config():
         "fraction": 1,
         "test_size": 0.2,
         "excluir_categoria": None,
-        "todas_columnas": False,
+        "todas_columnas": True,
 
         # Estructura de datos
         "feature_columns": [

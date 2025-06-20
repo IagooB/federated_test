@@ -1,3 +1,0 @@
-# Generación Test Binario
-
-
