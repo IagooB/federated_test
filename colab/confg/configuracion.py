@@ -1,4 +1,4 @@
-#### BINARIO ####
+#### COLAB ####
 
 SEED = 42
 
