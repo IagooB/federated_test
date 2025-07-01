@@ -1,15 +1,16 @@
 import csv
 from functools import lru_cache
 from pathlib import Path
-
+from collections import OrderedDict
 import pandas as pd
 import torch
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
-
-from confg.configuracion import exper_config, SEED
+from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
+import flwr
+from confg.configuracion import *
 
 # Paths and caches
 _EXPERIMENT_CSV = Path(exper_config.get("experiment_log_path", "datos_experimento.csv"))
@@ -40,24 +41,30 @@ def _log_experiment(df_shape, client_id, slice_label, num_samples, label_counts_
 
 
 @lru_cache(maxsize=1)
-def load_full_dataset(path: str, fraction: float, exclude_label: int = None) -> pd.DataFrame:
+def load_full_dataset(path: str, fraction: float) -> pd.DataFrame:
+    # Cargar el dataset y eliminar filas con valores nulos
     df = pd.read_csv(path).dropna().sample(frac=fraction, random_state=SEED)
-    if exclude_label is not None:
-        df = df[df["Label"] != exclude_label]
+
+    if exper_config["excluir_categoria"] is not None:
+        df = df[df["Label"] != exper_config["excluir_categoria"]]
+
+    # Codificar la columna 'Label' usando LabelEncoder
     le = preprocessing.LabelEncoder()
     df["Label"] = le.fit_transform(df["Label"])
+
+    # Asegurarse de que la columna 'Slice' sea de tipo entero
     df["Slice"] = df["Slice"].astype(int)
 
+    # Obtener la lista de columnas de características
     all_cols = exper_config["feature_columns"]
-    if not exper_config.get("todas_columnas", False):
-        all_cols = [
-            "Flow Duration",
-            "Fwd Packet Length Std",
-            "ACK Flag Count",
-            "Protocol",
-            "Total Fwd Packet",
-            "Fwd Seg Size Min",
-        ]
+
+    # Si no se usan todas las columnas, eliminar las especificadas
+    if not exper_config["todas_columnas"]:
+        columns_to_remove = {'Src IP', 'Dst IP', 'Src Port', 'Dst Port'}
+        all_cols = [col for col in all_cols if col not in columns_to_remove]
+
+    # Seleccionar solo las columnas relevantes del DataFrame
+    df = df[all_cols + ["Slice", "Label"]]
 
     return df.reset_index(drop=True)
 
@@ -106,7 +113,6 @@ def load_data(partition_id: int, num_partitions: int):
     full_df = load_full_dataset(
         path=exper_config["data_file_path"],
         fraction=exper_config["fraction"],
-        exclude_label=exper_config.get("excluir_categoria"),
     )
 
     # 2) Particionar: clientes 0–4 Slice=0, 5–9 Slice=1
@@ -124,7 +130,8 @@ def load_data(partition_id: int, num_partitions: int):
     _log_experiment(df_shape, partition_id, slice_label, num_samples, label_counts_str)
 
     # 5) Crear DataLoaders
-    X = client_df.drop(columns=["Label", "Slice"]).values
+    #X = client_df.drop(columns=["Label", "Slice"]).values
+    X = client_df.drop(columns=["Label"]).values
     y = client_df["Label"].values
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=exper_config["test_size"], random_state=SEED
@@ -178,12 +185,18 @@ def evaluate(model, test_loader):
     return total_loss / total_count, total_correct / total_count
 
 
-def get_weights(net):
-    return [val.cpu().numpy() for _, val in net.state_dict().items()]
+def get_weights(model: torch.nn.Module) -> flwr.common.Parameters:
+    # Extrae TODO el state_dict (parámetros + buffers)
+    state_dict = model.state_dict()
+    arrays = [tensor.cpu().numpy() for tensor in state_dict.values()]
+    return ndarrays_to_parameters(arrays)
 
 
-def set_weights(net, parameters):
-    state_dict = net.state_dict()
-    for key, array in zip(state_dict.keys(), parameters):
-        state_dict[key] = torch.tensor(array)
-    net.load_state_dict(state_dict, strict=True)
+def set_weights(model: torch.nn.Module, params: flwr.common.Parameters) -> None:
+    # Reconstruye el state_dict completo a partir de los arrays recibidos
+    arrays = parameters_to_ndarrays(params)
+    keys = list(model.state_dict().keys())
+    new_state = OrderedDict(
+        (k, torch.tensor(v)) for k, v in zip(keys, arrays)
+    )
+    model.load_state_dict(new_state, strict=True)

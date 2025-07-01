@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from pathlib import Path
+from random import sample
 from typing import Tuple, List
 
 import flwr as fl
@@ -134,31 +134,58 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
             server_round: int,
             parameters: fl.common.Parameters,
             client_manager: fl.server.ClientManager
-    ) -> List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitIns]]:
+    ) -> List[Tuple[fl.server.client_proxy.ClientProxy, FitIns]]:
+        """
+        Selecciona clientes para la ronda de entrenamiento.
+        - Si clientes_random=True: toma una muestra aleatoria de clientes mixtos.
+        - Si clientes_random=False: alterna Slice fijo por ronda.
+        """
+        # Esperar registro de todos los clientes
+        client_manager.wait_for(
+            num_clients=exper_config["num_clients"],
+            timeout=30,
+        )
 
-        client_manager.wait_for(num_clients=exper_config["num_clients"],
-                                timeout=30)
+        # Lista de todos los proxies de cliente
+        all_clients = list(client_manager.all().values())
 
-        # Alternamos slice por ronda
-        target_slice = 1 if server_round % 2 == 0 else 0
-        selected_clients = []
+        # Flag de muestreo aleatorio puro
+        if exper_config["clientes_random"]:
+            # Selección aleatoria de clientes mixtos (mezcla slices)
+            selected = sample(
+                all_clients,
+                exper_config["clients_por_ronda"]
+            )
+        else:
+            # Selección fija alternando slice por ronda
+            target_slice = 1 if server_round % 2 == 0 else 0
+            selected = []
+            for client in all_clients:
+                try:
+                    props = client.get_properties(
+                        GetPropertiesIns(config={}),
+                        timeout=30,
+                        group_id=None,
+                    ).properties
+                    if props.get("Slice", -1) == target_slice:
+                        selected.append(client)
+                except Exception as e:
+                    logger.error(
+                        f"Error obteniendo propiedades del cliente durante configure_fit: {e}"
+                    )
+                    continue
 
-        for cid, client in client_manager.all().items():
-            try:
-                props = client.get_properties(
-                    GetPropertiesIns(config={}),
-                    timeout=30,
-                    group_id=None
-                ).properties
+        logger.info(
+            f"Ronda {server_round}: seleccionados {len(selected)} clientes"
+            f" (clientes_random={exper_config['clientes_random']}, "
+            f"clients_por_ronda={exper_config['clients_por_ronda']})"
+        )
 
-                if props.get("Slice", -1) == target_slice:
-                    selected_clients.append(client)
-            except Exception as e:
-                logger.error(f"Error obteniendo propiedades del cliente {cid}: {e}")
-                continue
-
-        logger.info(f"Ronda {server_round}: seleccionados {len(selected_clients)} clientes (Slice={target_slice})")
-        return [(client, FitIns(parameters, {})) for client in selected_clients]
+        # Devolver lista de (cliente, instrucciones de fit)
+        return [
+            (client, FitIns(parameters, {}))
+            for client in selected
+        ]
 
     def aggregate_fit(self, server_round, results, failures):
         aggregated_params, aggregated_metrics = super().aggregate_fit(server_round, results, failures)

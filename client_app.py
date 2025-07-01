@@ -1,9 +1,5 @@
 from typing import Dict
-from typing import Dict
 
-import numpy as np
-import pandas as pd
-import torch
 from flwr.client import Client, ClientApp
 from flwr.common import (
     GetParametersIns,
@@ -16,12 +12,10 @@ from flwr.common import (
     EvaluateRes,
     Status,
     Code,
-    ndarrays_to_parameters,
-    parameters_to_ndarrays,
 )
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-from confg.configuracion import exper_config, input_shape
+from confg.configuracion import *
 from logg import logger
 from modelos import create_global_model
 from task import *
@@ -79,69 +73,40 @@ class FlowerClient(Client):
 
     def fit(self, ins: FitIns) -> FitRes:
         # Cargar parámetros globales
-        set_weights(self.net, parameters_to_ndarrays(ins.parameters))
+        set_weights(self.net, ins.parameters)
         # Entrenar local
         train(self.net, self.train_loader, num_epochs=exper_config["local_epochs"])
         # Devolver parámetros actualizados
-        new_params = ndarrays_to_parameters(get_weights(self.net))
         return FitRes(
             status=Status(code=Code.OK, message="Success"),
-            parameters=new_params,
+            parameters=get_weights(self.net),
             num_examples=len(self.train_loader.dataset),
             metrics={"client_id": self.client_id},
         )
 
     def evaluate(self, ins: EvaluateIns) -> EvaluateRes:
-        # 1) Cargar parámetros globales
-        set_weights(self.net, parameters_to_ndarrays(ins.parameters))
-
-        # 2) Usar tu helper evaluate() para loss y accuracy
+        set_weights(self.net, ins.parameters)
         loss, accuracy = evaluate(self.net, self.test_loader)
 
-        # 3) Extraer preds y labels para métricas avanzadas
-        all_preds = []
-        all_labels = []
-        self.net.eval()
+        all_preds, all_labels = [], []
         with torch.no_grad():
             for X_batch, y_batch in self.test_loader:
-                X_batch = X_batch.to(self.device)
-                outputs = self.net(X_batch)
+                outputs = self.net(X_batch.to(self.device))
                 _, preds = torch.max(outputs, dim=1)
                 all_preds.extend(preds.cpu().numpy())
                 all_labels.extend(y_batch.numpy())
 
-        all_preds = np.array(all_preds)
-        all_labels = np.array(all_labels)
+        avg_type = "binary" if exper_config["modo_binario"] else "macro"
 
-        # 4) Calcular precision, recall y f1‐score (macro)
-        precision = precision_score(
-            all_labels,
-            all_preds,
-            labels=[0, 1],
-            average="macro",
-            zero_division=0
-        )
-        recall = recall_score(
-            all_labels,
-            all_preds,
-            labels=[0, 1],
-            average="macro",
-            zero_division=0
-        )
-        f1 = f1_score(
-            all_labels,
-            all_preds,
-            labels=[0, 1],
-            average="macro",
-            zero_division=0
-        )
+        precision = precision_score(all_labels, all_preds, average=avg_type, zero_division=0)
+        recall = recall_score(all_labels, all_preds, average=avg_type, zero_division=0)
+        f1 = f1_score(all_labels, all_preds, average=avg_type, zero_division=0)
 
-        # 5) Devolver EvaluateRes con todas las métricas
         metrics = {
             "accuracy": float(accuracy),
-            "precision_macro": float(precision),
-            "recall_macro": float(recall),
-            "f1_macro": float(f1),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
         }
 
         return EvaluateRes(
@@ -158,7 +123,7 @@ def client_fn(context) -> Client:
     n_part = context.node_config["num-partitions"]
     train_loader, test_loader, slice_label = load_data(pid, n_part)
     # shape_sinlabel debe seguir indicando sólo la dimensión de entrada
-    net = create_global_model(input_shape=input_shape)
+    net = create_global_model(input_shape=input_shape, num_classes=exper_config["num_clases"])
     return FlowerClient(net, train_loader, test_loader, pid, slice_label).to_client()
 
 
