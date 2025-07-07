@@ -130,9 +130,10 @@ def load_data(partition_id: int, num_partitions: int):
     _log_experiment(df_shape, partition_id, slice_label, num_samples, label_counts_str)
 
     # 5) Crear DataLoaders
-    #X = client_df.drop(columns=["Label", "Slice"]).values
-    X = client_df.drop(columns=["Label"]).values
+    drop_cols = ["Label"] + ([] if exper_config["con_Slice"] else ["Slice"])
+    X = client_df.drop(columns=drop_cols).values
     y = client_df["Label"].values
+
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=exper_config["test_size"], random_state=SEED
     )

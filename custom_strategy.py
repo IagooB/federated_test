@@ -3,7 +3,7 @@ import logging
 import os
 from random import sample
 from typing import Tuple, List
-
+from pathlib import Path
 import flwr as fl
 import numpy as np
 import pandas as pd
@@ -16,7 +16,7 @@ from confg.configuracion import *
 logger = logging.getLogger(__name__)
 logging.getLogger("flwr").propagate = False
 
-pesos_path = Path(exper_config["guardado_pesos"])
+pesos_path = exper_config["guardado_pesos"]
 
 if pesos_path.exists():
     pesos_path.unlink()
