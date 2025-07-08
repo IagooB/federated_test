@@ -28,14 +28,15 @@ def load_config():
             "Protocol",
         ],
         "con_Slice": True,
-        "clientes_random": True,
-        "num_rounds": 100,
+        "clientes_random": False,
+        "num_rounds": 5,
         "num_clients": 10,
         "clients_por_ronda": 5,
         "fraction_fit": 1.0,
         "local_epochs": 1,
         "batch_size": 32,
         "lr_cliente_simulado": 0.01,
+
         # Paths
         "client_info_dir": "data/client_info",
         "experiment_log_path": "data/datos_experimento.csv",

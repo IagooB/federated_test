@@ -23,18 +23,18 @@ if pesos_path.exists():
 
 pesos_path.parent.mkdir(parents=True, exist_ok=True)
 
-# Create CSV with headers if it doesn't exist
-if not os.path.exists(exper_config["guardado_pesos"]):
+if not pesos_path.exists():
     pd.DataFrame(
         columns=[
-            "ronda",
-            "client_id",
-            "Slice",
-            "pesos_previos",
-            "pesos_nuevos",
-            "diferencia_pesos",
+            "round",
+            "client",
+            "slice",
+            "initial_weights",
+            "updated_weights",
+            "delta_weights",
+            "delta_flat",
         ]
-    ).to_csv(exper_config["guardado_pesos"], index=False)
+    ).to_csv(pesos_path, index=False)
 
 
 def flatten_parameters(parameters):
@@ -54,9 +54,7 @@ def aggregate_client_info():
     return all_data.to_dict("records")
 
 
-# ---------------- Clase renombrada para multiclasificación ----------------
 class CustomFedAvg(fl.server.strategy.FedAvg):
-    # --------------------------------------------------------------------------
     def __init__(
             self,
             *args,
@@ -66,7 +64,6 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
             **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        # --- Configuración WandB ---
         self.use_wandb = use_wandb
         self.run_config = run_config
 
@@ -80,18 +77,13 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
 
         self.previous_parameters = None
 
-        # Paths para logs de métricas
+        # Paths for metric logs (unchanged)
         self.metrics_csv = Path(exper_config.get("metrics_log_path"))
-        self.client_metrics_csv = Path(
-            exper_config.get("client_metrics_log_path")
-        )
-        # Asegurarse de que exista la carpeta
+        self.client_metrics_csv = Path(exper_config.get("client_metrics_log_path"))
         self.metrics_csv.parent.mkdir(parents=True, exist_ok=True)
         self.client_metrics_csv.parent.mkdir(parents=True, exist_ok=True)
-
         if self.metrics_csv.exists():
             self.metrics_csv.unlink()
-
         if self.client_metrics_csv.exists():
             self.client_metrics_csv.unlink()
 
@@ -101,7 +93,7 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
             parameters: fl.common.Parameters,
             client_manager: fl.server.ClientManager
     ):
-        #Esperamos a que TODOS los clientes se registren
+        # Esperamos a que TODOS los clientes se registren
         client_manager.wait_for(
             num_clients=exper_config["num_clients"],
             timeout=30,
@@ -187,41 +179,71 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
             for client in selected
         ]
 
-    def aggregate_fit(self, server_round, results, failures):
+    def aggregate_fit(
+            self,
+            server_round: int,
+            results,
+            failures,
+    ):
+        # Run base aggregation
         aggregated_params, aggregated_metrics = super().aggregate_fit(server_round, results, failures)
 
-        if aggregated_params:
+        if aggregated_params is not None:
+            # Map client_id to slice
             client_info = {str(i["client_id"]): i["Slice"] for i in aggregate_client_info()}
-            round_data = []
-            prev_flat = (
-                flatten_parameters(self.previous_parameters)
-                if self.previous_parameters is not None
-                else None
-            )
+            records = []
+
+            # Prepare previous arrays and flat
+            prev_params = self.previous_parameters
+            prev_arrays = parameters_to_ndarrays(prev_params) if prev_params is not None else None
+            prev_flat = (flatten_parameters(prev_params) if prev_params is not None else None)
 
             for client_proxy, fit_res in results:
-                cid = fit_res.metrics.get("client_id", "Unknown")
-                slice_label = client_info.get(str(cid), "Unknown")
-                new_dict = arrays_to_dict(parameters_to_ndarrays(fit_res.parameters))
-                new_flat = flatten_parameters(fit_res.parameters)
+                cid = fit_res.metrics.get("client_id", "unknown")
+                slice_label = client_info.get(str(cid), "unknown")
 
-                delta_list = (new_flat - prev_flat).tolist() if prev_flat is not None else []
+                # Current arrays and flat
+                curr_arrays = parameters_to_ndarrays(fit_res.parameters)
+                curr_flat = flatten_parameters(fit_res.parameters)
 
-                round_data.append({
-                    "ronda": server_round,
-                    "client_id": cid,
-                    "Slice": slice_label,
-                    "pesos_previos": json.dumps(arrays_to_dict(
-                        parameters_to_ndarrays(self.previous_parameters))) if prev_flat is not None else "[]",
-                    "pesos_nuevos": json.dumps(new_dict),
-                    "diferencia_pesos": json.dumps(delta_list),
+                # initial_weights
+                initial_dict = arrays_to_dict(prev_arrays) if prev_arrays is not None else {}
+                # updated_weights
+                updated_dict = arrays_to_dict(curr_arrays)
+
+                # delta_weights as dict of arrays
+                if prev_arrays is not None:
+                    delta_arrays = [c - p for c, p in zip(curr_arrays, prev_arrays)]
+                    delta_dict = arrays_to_dict(delta_arrays)
+                    delta_flat_list = (curr_flat - prev_flat).tolist()
+                else:
+                    delta_dict = {}
+                    delta_flat_list = []
+
+                records.append({
+                    "round": server_round,
+                    "client": cid,
+                    "slice": slice_label,
+                    "initial_weights": json.dumps(initial_dict),
+                    "updated_weights": json.dumps(updated_dict),
+                    "delta_weights": json.dumps(delta_dict),
+                    "delta_flat": json.dumps(delta_flat_list),
                 })
 
-            pd.DataFrame(round_data).to_csv(exper_config["guardado_pesos"], mode='a', header=False, index=False)
-            logger.info(f"Guardados datos de ronda {server_round} para {len(round_data)} "
-                        f"clientes en {exper_config['guardado_pesos']}")
+            # Append to CSV
+            pd.DataFrame(records).to_csv(
+                pesos_path,
+                mode="a",
+                header=False,
+                index=False,
+            )
+            logger.info(
+                f"Guardados datos de ronda {server_round} para {len(records)} clientes en {pesos_path}"
+            )
 
-        self.previous_parameters = aggregated_params
+            # Update previous parameters
+            self.previous_parameters = aggregated_params
+
         return aggregated_params, aggregated_metrics
 
     def aggregate_evaluate(self, server_round: int, results, failures):
